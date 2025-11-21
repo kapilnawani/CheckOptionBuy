@@ -1,18 +1,28 @@
-# Use official Playwright Python base image (includes Chromium + deps)
-FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
+FROM python:3.10-slim
 
-# Create app directory
+# Prevent Python from writing .pyc files & enable unbuffered logs
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
-# Install Python dependencies
+# System updates
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your code
+# Install Playwright browsers + OS deps for Chromium
+RUN python -m playwright install --with-deps chromium
+
+# Copy app code
 COPY . .
 
-# Expose port (Railway will map it)
-EXPOSE 8000
+# Railway provides PORT env; default to 8000 for local runs
+ENV PORT=8000
 
-# Start the FastAPI server
-CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI (api_server.py) with uvicorn
+CMD ["sh", "-c", "uvicorn api_server:app --host 0.0.0.0 --port ${PORT:-8000}"]
