@@ -5,5 +5,4 @@ numpy
 scipy
 gspread
 oauth2client
-playwright
 python-dotenv
