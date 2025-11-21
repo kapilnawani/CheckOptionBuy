@@ -1,5 +1,5 @@
 # Use official Playwright Python base image (includes Chromium + deps)
-FROM mcr.microsoft.com/playwright/python:v1.56.0-jammy
+FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
 # Create app directory
 WORKDIR /app
