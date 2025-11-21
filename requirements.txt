@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+scipy
+gspread
+oauth2client
+playwright
+python-dotenv
