@@ -1,9 +1,9 @@
 fastapi
 uvicorn[standard]
+playwright
 pandas
 numpy
 scipy
 gspread
 oauth2client
 python-dotenv
-playwright
