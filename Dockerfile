@@ -1,23 +1,17 @@
-FROM python:3.10-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Dockerfile
+FROM mcr.microsoft.com/playwright/python:1.56.0-jammy
 
 WORKDIR /app
-
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright + Chromium browsers and deps
-RUN python -m playwright install --with-deps chromium
-
+# copy source
 COPY . .
 
-# Railway sets PORT, default 8000 for local
-ENV PORT=8000
+# ensure playwright browsers installed (image already has them but this ensures compatibility)
+RUN python -m playwright install --with-deps chromium
 
-CMD ["sh", "-c", "uvicorn api_server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8080
+
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
