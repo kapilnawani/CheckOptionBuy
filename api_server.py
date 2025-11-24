@@ -1,77 +1,77 @@
-# api_server.py
+# api_server.py (replace your current file)
 import os
-import sys
-import json
+import traceback
 import logging
-from logging.handlers import RotatingFileHandler
-from datetime import datetime
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
-from typing import Optional
 
-# import the API-friendly option module (lazy import of playwright happens inside)
-import option_buy_api as ob
+# configure logging to stdout (Railway will capture this)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# Configure structured logging to a file (JSON lines) so Railway logs show details on crashes
-LOG_PATH = os.getenv("APP_LOG_PATH", "app_logs.jsonl")
-logger = logging.getLogger("option_buy_api")
-logger.setLevel(logging.INFO)
-handler = RotatingFileHandler(LOG_PATH, maxBytes=2_000_000, backupCount=3)
-formatter = logging.Formatter('%(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
+# import the option_buy module (your CLI copy)
+import option_buy
+from option_buy import (
+    analyze_option_chain,
+    select_candidate_strikes,
+    log_to_google_sheet,
+)
 
-app = FastAPI(title="Option Buy API", version="1.0.0")
+app = FastAPI(title="Option Buy API", version="1.0.1")
 
-def _log_event(event: str, **fields):
-    payload = {"ts": datetime.utcnow().isoformat()+"Z", "event": event}
-    payload.update(fields)
-    try:
-        logger.info(json.dumps(payload))
-    except Exception:
-        # fallback to stdout for Railway
-        print(json.dumps(payload))
-
+# quick health
 @app.get("/health")
 def health():
-    _log_event("health.check", status="ok")
-    return {"status":"ok"}
+    return {"status": "ok"}
+
+# debug/diagnostics endpoint
+@app.get("/debug")
+def debug():
+    info = {
+        "symbol_default": option_buy.SYMBOL,
+        "min_oi": option_buy.MIN_OI,
+        "min_volume": option_buy.MIN_VOLUME,
+        "max_candidates": option_buy.MAX_CANDIDATES,
+        "feature_toggles": getattr(option_buy, "FACTOR_ENABLE", {}),
+        "lots_by_symbol_sample": dict(list(getattr(option_buy, "LOTS_BY_SYMBOL", {}).items())[:10]),
+    }
+    return JSONResponse(status_code=200, content=info)
 
 @app.get("/analyze")
-def analyze(symbol: str = Query(..., description="Underlying symbol, e.g. HDFCBANK or NIFTY"),
-            log_to_sheet: bool = Query(False, description="Log to Google Sheet if credentials available.")):
-    symbol = symbol.upper().strip()
-    _log_event("request.start", symbol=symbol, log_to_sheet=log_to_sheet)
-    # temporarily set module SYMBOL for behavior that relies on it (kept minimal)
-    original_sym = ob.SYMBOL
-    ob.SYMBOL = symbol
+def analyze(
+    symbol: str = Query(..., description="Underlying symbol, e.g. HDFCBANK or NIFTY"),
+    log_to_sheet: bool = Query(False, description="If true, log output to Google Sheet (requires creds.json)"),
+):
+    logging.info(f"/analyze called symbol={symbol} log_to_sheet={log_to_sheet}")
+    original_symbol = option_buy.SYMBOL
+    option_buy.SYMBOL = symbol.upper()
+
     try:
-        raw = ob.fetch_option_chain(symbol)
-        df = ob.analyze_option_chain(raw, symbol)
+        # Use unified fetcher function name used in patch A
+        logging.info("fetching chain for %s ...", option_buy.SYMBOL)
+        data = option_buy.fetch_chain(option_buy.SYMBOL)
+        logging.info("fetched chain, parsing...")
+        df = analyze_option_chain(data, option_buy.SYMBOL)
         if df.empty:
-            _log_event("no_data", symbol=symbol)
-            return JSONResponse(status_code=200, content={"symbol":symbol, "candidates":[], "message":"No valid option data parsed."})
-        candidates = ob.select_candidate_strikes(df, ob.CAPITAL, ob.RISK_PER_TRADE_PCT)
+            return JSONResponse(status_code=200, content={"symbol": option_buy.SYMBOL, "candidates": [], "message": "No valid option data parsed."})
+
+        candidates = select_candidate_strikes(df, option_buy.CAPITAL, option_buy.RISK_PER_TRADE_PCT)
         if not candidates:
-            _log_event("no_candidates", symbol=symbol)
-            return JSONResponse(status_code=200, content={"symbol":symbol, "candidates":[], "message":"No candidates after filtering (try relax MIN_OI/MIN_VOLUME)."})
-        # optional sheet logging
-        sheet_warning = None
-        if log_to_sheet and ob.GS_CREDS_JSON and os.path.exists(ob.GS_CREDS_JSON):
+            return JSONResponse(status_code=200, content={"symbol": option_buy.SYMBOL, "candidates": [], "message": "No candidates found after filtering. Try relaxing MIN_OI or MIN_VOLUME."})
+
+        # Optional logging to Google Sheets but don't crash on failure
+        if log_to_sheet and option_buy.GS_CREDS_JSON and os.path.exists(option_buy.GS_CREDS_JSON):
             try:
-                ob.log_to_google_sheet(ob.GS_CREDS_JSON, ob.GOOGLE_SHEET_NAME, candidates)
+                log_to_google_sheet(option_buy.GS_CREDS_JSON, option_buy.GOOGLE_SHEET_NAME, candidates)
             except Exception as e:
-                sheet_warning = str(e)
-                _log_event("sheet.log_failed", error=sheet_warning)
-        _log_event("request.success", symbol=symbol, num_candidates=len(candidates))
-        resp = {"symbol":symbol, "candidates": candidates}
-        if sheet_warning:
-            resp["sheet_warning"] = sheet_warning
-        return JSONResponse(status_code=200, content=resp)
+                logging.exception("Google Sheets logging failed")
+                return JSONResponse(status_code=200, content={"symbol": option_buy.SYMBOL, "candidates": candidates, "warning": f"Failed to log to Google Sheet: {e}"})
+
+        return JSONResponse(status_code=200, content={"symbol": option_buy.SYMBOL, "candidates": candidates})
+
     except Exception as e:
-        err_str = str(e)
-        _log_event("request.error", symbol=symbol, error=err_str)
-        return JSONResponse(status_code=500, content={"error": err_str})
+        # log full traceback to stdout so Railway shows it in logs
+        logging.exception("Unhandled exception in /analyze")
+        tb = traceback.format_exc()
+        return JSONResponse(status_code=500, content={"error": str(e), "traceback": tb})
     finally:
-        ob.SYMBOL = original_sym
-        _log_event("request.end", symbol=symbol)
+        option_buy.SYMBOL = original_symbol
