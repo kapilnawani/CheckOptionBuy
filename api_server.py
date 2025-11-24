@@ -8,12 +8,18 @@ from fastapi.responses import JSONResponse
 # configure logging to stdout (Railway will capture this)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# import the option_buy module (your CLI copy)
-import option_buy
-from option_buy import (
+
+import option_buy_api as option_buy
+from option_buy_api import (
+    fetch_option_chain_playwright,
     analyze_option_chain,
     select_candidate_strikes,
     log_to_google_sheet,
+    SYMBOL,
+    CAPITAL,
+    RISK_PER_TRADE_PCT,
+    GOOGLE_SHEET_NAME,
+    GS_CREDS_JSON,
 )
 
 app = FastAPI(title="Option Buy API", version="1.0.1")
